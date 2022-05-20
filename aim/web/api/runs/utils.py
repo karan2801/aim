@@ -174,7 +174,11 @@ async def metric_search_result_streamer(traces: SequenceCollection,
             epochs = trace.epochs.first_n_values(steps_num)
             timestamps = trace.timestamps.first_n_values(steps_num)
             import more_itertools
-            (iters, values, epochs, timestamps) = map(np.array, more_itertools.sort_together((iters, values, epochs, timestamps)))
+
+            def float_64_array(arr):
+                return np.array(arr, dtype='float64')
+
+            (iters, values, epochs, timestamps) = map(float_64_array, more_itertools.sort_together((iters, values, epochs, timestamps)))
 
             num_records = len(values)
             step = (num_records // steps_num) or 1
