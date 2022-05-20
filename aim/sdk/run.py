@@ -216,7 +216,9 @@ class SequenceInfo:
     def __init__(self):
         self.initialized = False
         self.count = None
-        self.sequence_dtype = None
+        self.dtype = None
+        self.version = None
+        self.step_view = None
         self.val_view = None
         self.epoch_view = None
         self.time_view = None
@@ -257,8 +259,7 @@ class Run(StructuredRunMixin):
                  log_system_params: Optional[bool] = False,
                  capture_terminal_logs: Optional[bool] = True):
         self._resources: Optional[RunAutoClean] = None
-        run_hash = run_hash or generate_run_hash()
-        self.hash = run_hash
+        self.hash: str = run_hash or generate_run_hash()
 
         self._finalized = False
 
@@ -285,7 +286,7 @@ class Run(StructuredRunMixin):
 
         self.series_run_tree: TreeView = self.repo.request_tree(
             'seqs', self.hash, read_only=read_only
-        ).subtree('seqs').subtree('chunks').subtree(self.hash)
+        ).subtree('seqs').subtree('v2').subtree('chunks').subtree(self.hash)
 
         if not read_only:
             if log_system_params:
@@ -308,7 +309,7 @@ class Run(StructuredRunMixin):
         if experiment:
             self.experiment = experiment
 
-        self._prepare_sequence_info(read_only)
+        self._preload_sequence_infos(read_only)
 
         self._system_resource_tracker: ResourceTracker = None
         self._prepare_resource_tracker(system_tracking_interval, capture_terminal_logs)
@@ -466,9 +467,18 @@ class Run(StructuredRunMixin):
             self.meta_run_tree['traces', ctx.idx, name, 'last'] = val
             self.meta_run_tree['traces', ctx.idx, name, 'last_step'] = step
 
-            seq_info.val_view[step] = val
-            seq_info.epoch_view[step] = epoch
-            seq_info.time_view[step] = track_time
+            if seq_info.version == 0:
+                seq_info.val_view[step] = val
+                seq_info.epoch_view[step] = epoch
+                seq_info.time_view[step] = track_time
+            else:
+                assert seq_info.version == 1
+                step_hash = hash_auto(step)
+                self.meta_run_tree['traces', ctx.idx, name, 'last_hash'] = step_hash
+                seq_info.step_view[step_hash] = step
+                seq_info.val_view[step_hash] = val
+                seq_info.epoch_view[step_hash] = epoch
+                seq_info.time_view[step_hash] = track_time
             seq_info.count = seq_info.count + 1
 
     @property
@@ -657,7 +667,7 @@ class Run(StructuredRunMixin):
         sequence = seq_cls(sequence_name, context, self)
         return sequence if bool(sequence) else None
 
-    def _prepare_sequence_info(self, read_only):
+    def _preload_sequence_infos(self, read_only):
         if read_only:
             return
 
@@ -673,11 +683,13 @@ class Run(StructuredRunMixin):
         seq_info = self.sequence_info[sequence_selector]
 
         assert not seq_info.initialized
+        seq_info.step_view = self.series_run_tree.subtree(sequence_selector).array('step', dtype='int64').allocate()
         seq_info.val_view = self.series_run_tree.subtree(sequence_selector).array('val').allocate()
         seq_info.epoch_view = self.series_run_tree.subtree(sequence_selector).array('epoch', dtype='int64').allocate()
         seq_info.time_view = self.series_run_tree.subtree(sequence_selector).array('time', dtype='int64').allocate()
         seq_info.count = len(seq_info.val_view)
-        seq_info.sequence_dtype = self.meta_run_tree.get(('traces', ctx.idx, name, 'dtype'), None)
+        seq_info.dtype = self.meta_run_tree.get(('traces', ctx.idx, name, 'dtype'), None)
+        seq_info.version = self.meta_run_tree.get(('traces', ctx.idx, name, 'version'), 0)
         seq_info.record_max_length = self.meta_run_tree.get(('traces', ctx.idx, name, 'record_max_length'), 0)
         seq_info.initialized = True
 
@@ -690,11 +702,13 @@ class Run(StructuredRunMixin):
             return seq_info
 
         # the subtree().array().allocate() method is write-only
+        seq_info.step_view = self.series_run_tree.subtree(sequence_selector).array('step', dtype='int64').allocate()
         seq_info.val_view = self.series_run_tree.subtree(sequence_selector).array('val').allocate()
         seq_info.epoch_view = self.series_run_tree.subtree(sequence_selector).array('epoch', dtype='int64').allocate()
         seq_info.time_view = self.series_run_tree.subtree(sequence_selector).array('time', dtype='int64').allocate()
         seq_info.count = 0
-        seq_info.sequence_dtype = None
+        seq_info.dtype = None
+        seq_info.version = 1
         seq_info.record_max_length = 0
         seq_info.initialized = True
         return seq_info
@@ -703,13 +717,13 @@ class Run(StructuredRunMixin):
         # this method is used in the `run.track()`, so please use only write-only instructions
         dtype = get_object_typename(val)
 
-        if seq_info.sequence_dtype is not None:
+        if seq_info.dtype is not None:
             def update_trace_dtype(new_dtype):
                 self.meta_tree['traces_types', new_dtype, ctx.idx, name] = 1
                 self.meta_run_tree['traces', ctx.idx, name, 'dtype'] = new_dtype
-                seq_info.sequence_dtype = new_dtype
+                seq_info.dtype = new_dtype
 
-            compatible = check_types_compatibility(dtype, seq_info.sequence_dtype, update_trace_dtype)
+            compatible = check_types_compatibility(dtype, seq_info.dtype, update_trace_dtype)
             if not compatible:
                 raise ValueError(f'Cannot log value \'{val}\' on sequence \'{name}\'. Incompatible data types.')
 
@@ -717,7 +731,7 @@ class Run(StructuredRunMixin):
             self.meta_tree['traces_types', dtype, ctx.idx, name] = 1
             self.meta_run_tree['traces', ctx.idx, name, 'dtype'] = dtype
             self.meta_run_tree['traces', ctx.idx, name, 'first_step'] = step
-            seq_info.sequence_dtype = dtype
+            seq_info.dtype = dtype
 
         if isinstance(val, (tuple, list)):
             record_max_length = max(seq_info.record_max_length, len(val))

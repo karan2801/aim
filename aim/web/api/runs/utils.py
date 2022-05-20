@@ -169,22 +169,26 @@ async def metric_search_result_streamer(traces: SequenceCollection,
         for trace in run_trace_collection.iter():
             if not run:
                 run = run_trace_collection.run
-            iters, values = trace.values.sparse_numpy()
+            iters = trace.indices.first_n_values(steps_num)
+            values = trace.values.first_n_values(steps_num)
+            epochs = trace.epochs.first_n_values(steps_num)
+            timestamps = trace.timestamps.first_n_values(steps_num)
+            import more_itertools
+            (iters, values, epochs, timestamps) = map(np.array, more_itertools.sort_together((iters, values, epochs, timestamps)))
+
             num_records = len(values)
             step = (num_records // steps_num) or 1
-            _slice = slice(0, num_records, step)
-            sliced_iters = sliced_np_array(iters, _slice)
             x_axis_trace = run.get_metric(x_axis, trace.context) if x_axis else None
-            x_axis_iters, x_axis_values = collect_x_axis_data(x_axis_trace, sliced_iters)
+            x_axis_iters, x_axis_values = collect_x_axis_data(x_axis_trace, iters)
 
             traces_list.append({
                 'name': trace.name,
                 'context': trace.context.to_dict(),
                 'slice': [0, num_records, step],
-                'values': numpy_to_encodable(sliced_np_array(values, _slice)),
-                'iters': numpy_to_encodable(sliced_iters),
-                'epochs': numpy_to_encodable(sliced_np_array(trace.epochs.values_numpy(), _slice)),
-                'timestamps': numpy_to_encodable(sliced_np_array(trace.timestamps.values_numpy(), _slice)),
+                'values': numpy_to_encodable(values),
+                'iters': numpy_to_encodable(iters),
+                'epochs': numpy_to_encodable(epochs),
+                'timestamps': numpy_to_encodable(timestamps),
                 'x_axis_values': x_axis_values,
                 'x_axis_iters': x_axis_iters,
             })
@@ -231,19 +235,18 @@ def collect_requested_metric_traces(run: Run, requested_traces: List[TraceBase],
         if not trace:
             continue
 
-        iters, values = trace.values.sparse_list()
+        iters = trace.indices.first_n_values(steps_num)
+        values = trace.values.first_n_values(steps_num)
+        import more_itertools
+        (iters, values) = more_itertools.sort_together((iters, values))
 
         values = list(map(lambda x: x if float('-inf') < x < float('inf') and x == x else None, values))
-
-        num_records = len(values)
-        step = (num_records // steps_num) or 1
-        _slice = slice(0, num_records, step)
 
         processed_traces_list.append({
             'name': trace.name,
             'context': trace.context.to_dict(),
-            'values': sliced_array(values, _slice),
-            'iters': sliced_array(iters, _slice),
+            'values': values,
+            'iters': iters,
         })
 
     return processed_traces_list

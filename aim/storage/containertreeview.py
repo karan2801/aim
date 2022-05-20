@@ -154,6 +154,8 @@ class ContainerTreeView(TreeView):
     ]]:
         prefix = E.encode_path(path)
         it = self.container.view(prefix).items()
+        # TODO [AT]: remove the next() call
+        next(it)
         for path, value in treeutils.iter_decode_tree(it, level=1):
             key, = path
             yield key, value

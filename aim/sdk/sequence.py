@@ -85,13 +85,12 @@ class Sequence(Generic[T]):
         return self._series_tree.array('val')
 
     @property
-    def indices(self) -> List[int]:
+    def indices(self) -> ArrayView:
         """Metric tracking steps as :obj:`list`.
 
             :getter: Returns steps list.
         """
-        array_view = [i for i, _ in enumerate(self.values)]
-        return array_view
+        return self._series_tree.array('step')
 
     @property
     def epochs(self) -> ArrayView:

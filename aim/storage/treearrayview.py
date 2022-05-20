@@ -31,50 +31,11 @@ class TreeArrayView(ArrayView):
         yield from self.keys()
 
     def values(self) -> Iterator[Any]:
-        for k, v in self.tree.items():
+        for k, v in self.items():
             yield v
 
     def items(self) -> Iterator[Tuple[int, Any]]:
         yield from self.tree.items()
-
-    def values_slice(self, _slice: slice, slice_by: str = 'step') -> Iterator[Any]:
-        for k, v in self.items_slice(_slice, slice_by):
-            yield v
-
-    # TODO [AT]: improve performance (move to cython?)
-    def items_slice(self, _slice: slice, slice_by: str = 'step') -> Iterator[Tuple[int, Any]]:
-        start, stop, step = _slice.start, _slice.stop, _slice.step
-        if start < 0 or stop < 0 or step < 0:
-            raise NotImplementedError('Negative index slices are not supported')
-        if step == 0:
-            raise ValueError('slice step cannot be zero')
-        if stop <= start:
-            return
-
-        if slice_by == 'index':
-            yield from islice(self.items(), start, stop, step)
-        elif slice_by == 'step':
-            items_ = self.items()
-
-            # TODO [AT]: tidy-up the rest of the method
-            # find fist item which has index matching the slice
-            for idx, val in items_:
-                if idx >= start:
-                    if idx == start:
-                        yield idx, val
-                    break
-
-            if step == 1:
-                for idx, val in items_:
-                    if stop is not None and idx >= stop:
-                        break
-                    yield idx, val
-            else:
-                for idx, val in items_:
-                    if stop is not None and idx >= stop:
-                        break
-                    if (idx - start) % step == 0:
-                        yield idx, val
 
     def values_in_range(self, start, stop, count=None) -> Iterator[Any]:
         for k, v in self.items_in_range(start, stop, count):
@@ -85,14 +46,14 @@ class TreeArrayView(ArrayView):
             return
 
         items_ = self.items()
-        items_in_range = []
+        items_list = []
         for idx, val in items_:
             if start <= idx < stop:
-                items_in_range.append((idx, val))
+                items_list.append((idx, val))
             if idx >= stop:
                 break
-        step = (len(items_in_range) // count or 1) if count else 1
-        yield from islice(items_in_range, 0, len(items_in_range), step)
+        step = (len(items_list) // count or 1) if count else 1
+        yield from islice(items_list, 0, len(items_list), step)
 
     def __len__(self) -> int:
         # TODO lazier
@@ -122,6 +83,14 @@ class TreeArrayView(ArrayView):
     ):
         assert isinstance(idx, int)
         self.tree[idx] = val
+
+    def first_n_values(self, limit) -> list:
+        values = []
+        for i, (k, v) in enumerate(self.items()):
+            if i >= limit:
+                break
+            values.append(v)
+        return values
 
     def sparse_list(self) -> Tuple[List[int], List[Any]]:
         indices = []
@@ -159,27 +128,21 @@ class TreeArrayView(ArrayView):
         return arr
 
     def first(self) -> Tuple[int, Any]:
-        idx = self.min_idx()
+        idx = self.first_idx()
         return idx, self[idx]
 
     def first_idx(self) -> int:
-        return self.min_idx()
+        return self.tree.first()
 
     def first_value(self) -> Any:
-        return self[self.min_idx()]
+        return self[self.first_idx()]
 
     def last(self) -> Tuple[int, Any]:
-        idx = self.max_idx()
+        idx = self.last_idx()
         return idx, self[idx]
 
     def last_idx(self) -> int:
-        return self.max_idx()
+        return self.tree.last()
 
     def last_value(self) -> Any:
-        return self[self.max_idx()]
-
-    def min_idx(self) -> int:
-        return self.tree.first()
-
-    def max_idx(self) -> int:
-        return self.tree.last()
+        return self[self.last_idx()]
